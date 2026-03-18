@@ -1,13 +1,19 @@
 #pragma once
+#include <vector>
 
-// MaskCombiner: Combines spectral masks from multiple processing stages.
-// Full implementation added in a later task.
 class MaskCombiner
 {
 public:
-    MaskCombiner() = default;
-    ~MaskCombiner() = default;
+    explicit MaskCombiner(int numBins);
+    void setParams(float feedbackKnob, float denoiseKnob, float dereverbKnob, float mixKnob);
+    void combine(const float* mask1, const float* mask2, const float* mask3, float* output);
+    bool isBypassed() const { return bypassed_; }
 
-    void prepare(int fftSize);
-    void reset();
+private:
+    int numBins_;
+    float feedbackKnob_ = 0.0f;
+    float denoiseKnob_ = 0.0f;
+    float dereverbKnob_ = 0.0f;
+    float mixKnob_ = 1.0f;
+    bool bypassed_ = true;
 };
