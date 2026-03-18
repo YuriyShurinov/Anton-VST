@@ -30,17 +30,21 @@ MLProcessor::MLProcessor(int numBins, const std::string& modelDir, int fftSize)
     : numBins_(numBins),
       modelDir_(modelDir),
       fftSize_(fftSize),
-      inputQueue_(numBins * 8) // buffer up to 8 frames
+      inputQueue_(4 * numBins * 8) // buffer up to 8 full history submissions
 {
     frameHistory_.resize(numFrames_ * numBins_, 0.0f);
-    noiseMaskA_.resize(numBins_, 1.0f);
-    noiseMaskB_.resize(numBins_, 1.0f);
-    reverbMaskA_.resize(numBins_, 1.0f);
-    reverbMaskB_.resize(numBins_, 1.0f);
+    for (int i = 0; i < 3; ++i) {
+        noiseMasks_[i].resize(numBins_, 1.0f);
+        reverbMasks_[i].resize(numBins_, 1.0f);
+    }
     tempNoiseMask_.resize(numBins_, 1.0f);
     tempReverbMask_.resize(numBins_, 1.0f);
 
-    env_ = std::make_unique<Ort::Env>(0, "DeFeedbackPro");
+#ifndef DEFEEDBACK_TEST_MODE
+    env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "DeFeedbackPro");
+#else
+    env_ = std::make_unique<Ort::Env>(2, "DeFeedbackPro");
+#endif
 
     std::string modelPath = modelDir + "/denoiser_" + std::to_string(fftSize) + ".onnx";
     if (loadModel(modelPath))
@@ -103,11 +107,8 @@ bool MLProcessor::getLatestMasks(float* noiseMask, float* reverbMask)
 {
     int buf = latestMaskBuffer_.load(std::memory_order_acquire);
     if (buf < 0) return false;
-
-    const auto& nm = (buf == 0) ? noiseMaskA_ : noiseMaskB_;
-    const auto& rm = (buf == 0) ? reverbMaskA_ : reverbMaskB_;
-    std::memcpy(noiseMask, nm.data(), numBins_ * sizeof(float));
-    std::memcpy(reverbMask, rm.data(), numBins_ * sizeof(float));
+    std::memcpy(noiseMask, noiseMasks_[buf].data(), numBins_ * sizeof(float));
+    std::memcpy(reverbMask, reverbMasks_[buf].data(), numBins_ * sizeof(float));
     return true;
 }
 
@@ -175,20 +176,34 @@ void MLProcessor::runInference(const float* input, int numFrames)
         const float* noiseData = outputs[0].GetTensorData<float>();
         const float* reverbData = outputs[1].GetTensorData<float>();
 
-        auto& nDst = (writingBuffer_ == 0) ? noiseMaskA_ : noiseMaskB_;
-        auto& rDst = (writingBuffer_ == 0) ? reverbMaskA_ : reverbMaskB_;
+        // Pick a buffer that isn't the current latest (being read) or the last written
+        int latest = latestMaskBuffer_.load(std::memory_order_acquire);
+        int writeSlot = 0;
+        for (int i = 0; i < 3; ++i) {
+            if (i != latest && i != writingBuffer_) { writeSlot = i; break; }
+        }
+
+        auto& nDst = noiseMasks_[writeSlot];
+        auto& rDst = reverbMasks_[writeSlot];
 
         std::memcpy(nDst.data(), noiseData, numBins_ * sizeof(float));
         std::memcpy(rDst.data(), reverbData, numBins_ * sizeof(float));
 
-        latestMaskBuffer_.store(writingBuffer_, std::memory_order_release);
-        writingBuffer_ = 1 - writingBuffer_;
+        latestMaskBuffer_.store(writeSlot, std::memory_order_release);
+        writingBuffer_ = writeSlot;
     }
     catch (...) { /* reuse last mask */ }
 #else
     // Test mode: generate sigmoid-like dummy masks
-    auto& nDst = (writingBuffer_ == 0) ? noiseMaskA_ : noiseMaskB_;
-    auto& rDst = (writingBuffer_ == 0) ? reverbMaskA_ : reverbMaskB_;
+    // Pick a buffer that isn't the current latest (being read) or the last written
+    int latest = latestMaskBuffer_.load(std::memory_order_acquire);
+    int writeSlot = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (i != latest && i != writingBuffer_) { writeSlot = i; break; }
+    }
+
+    auto& nDst = noiseMasks_[writeSlot];
+    auto& rDst = reverbMasks_[writeSlot];
 
     for (int i = 0; i < numBins_; ++i)
     {
@@ -201,8 +216,8 @@ void MLProcessor::runInference(const float* input, int numFrames)
         rDst[i] = sig;
     }
 
-    latestMaskBuffer_.store(writingBuffer_, std::memory_order_release);
-    writingBuffer_ = 1 - writingBuffer_;
+    latestMaskBuffer_.store(writeSlot, std::memory_order_release);
+    writingBuffer_ = writeSlot;
 #endif
 }
 
@@ -215,10 +230,10 @@ void MLProcessor::setFFTSize(int fftSize)
     fftSize_ = fftSize;
     numBins_ = fftSize / 2 + 1;
     frameHistory_.assign(numFrames_ * numBins_, 0.0f);
-    noiseMaskA_.assign(numBins_, 1.0f);
-    noiseMaskB_.assign(numBins_, 1.0f);
-    reverbMaskA_.assign(numBins_, 1.0f);
-    reverbMaskB_.assign(numBins_, 1.0f);
+    for (int i = 0; i < 3; ++i) {
+        noiseMasks_[i].assign(numBins_, 1.0f);
+        reverbMasks_[i].assign(numBins_, 1.0f);
+    }
     tempNoiseMask_.assign(numBins_, 1.0f);
     tempReverbMask_.assign(numBins_, 1.0f);
     latestMaskBuffer_ = -1;

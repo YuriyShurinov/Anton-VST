@@ -61,10 +61,10 @@ private:
     // SPSC communication: audio thread -> inference thread
     RingBuffer<float> inputQueue_;   // submits magnitude frames (numBins_ per frame)
 
-    // Inference results (double-buffered via atomics)
-    std::vector<float> noiseMaskA_, noiseMaskB_;
-    std::vector<float> reverbMaskA_, reverbMaskB_;
-    std::atomic<int> latestMaskBuffer_{-1}; // -1 = none, 0 = A, 1 = B
+    // Triple-buffered inference results
+    std::vector<float> noiseMasks_[3];
+    std::vector<float> reverbMasks_[3];
+    std::atomic<int> latestMaskBuffer_{-1}; // -1 = none, 0/1/2 = which buffer is latest
     int writingBuffer_ = 0; // only accessed by inference thread
 
     // Pre-allocated temp buffers for computeMask2 (avoid audio-thread allocation)

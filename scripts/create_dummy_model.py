@@ -6,6 +6,7 @@ Output reverb_mask: [1, num_bins] float32
 The dummy model simply outputs 0.5 for all bins (identity-ish).
 """
 import numpy as np
+import os
 
 try:
     import onnx
@@ -17,15 +18,13 @@ except ImportError:
 FFT_SIZES = [128, 256, 512, 1024, 2048]
 NUM_FRAMES = 4  # temporal context
 
+os.makedirs("models", exist_ok=True)
+
 for fft_size in FFT_SIZES:
     num_bins = fft_size // 2 + 1
 
     # Input
     X = helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, NUM_FRAMES, num_bins])
-
-    # Constant 0.5 mask
-    half_val = helper.make_tensor("half", TensorProto.FLOAT, [1, num_bins],
-                                   [0.5] * num_bins)
 
     # Output nodes -- just return constants
     noise_out = helper.make_tensor_value_info("noise_mask", TensorProto.FLOAT, [1, num_bins])
