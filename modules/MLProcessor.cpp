@@ -238,6 +238,7 @@ void MLProcessor::setFFTSize(int fftSize)
     tempReverbMask_.assign(numBins_, 1.0f);
     latestMaskBuffer_ = -1;
     inputQueue_.reset();
+    inputQueue_.resize(4 * numBins_ * 8);
 
     std::string modelPath = modelDir_ + "/denoiser_" + std::to_string(fftSize) + ".onnx";
     if (loadModel(modelPath))

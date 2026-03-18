@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include <catch2/catch_all.hpp>
 #include "SpectralEngine.h"
 #include <cmath>

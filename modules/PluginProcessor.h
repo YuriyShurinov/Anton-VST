@@ -72,7 +72,7 @@ private:
 
     RingBuffer<float> spectrumForGUI_{2048};
 
-    void initModules(int fftSize);
+    void initModules(int fftSize, int maxBlockSize = 4096);
     void updateParametersForBlock();
     int getFFTSizeFromParam() const;
     void timerCallback() override;

@@ -34,7 +34,7 @@ DeFeedbackProProcessor::createParameterLayout()
     return { params.begin(), params.end() };
 }
 
-void DeFeedbackProProcessor::initModules(int fftSize)
+void DeFeedbackProProcessor::initModules(int fftSize, int maxBlockSize)
 {
     currentFFTSize_ = fftSize;
     int numBins = fftSize / 2 + 1;
@@ -65,8 +65,8 @@ void DeFeedbackProProcessor::initModules(int fftSize)
     mask2_.resize(numBins);
     mask3_.resize(numBins);
 
-    int maxBlock = 4096;
-    int maxResampled = static_cast<int>(maxBlock * resampleRatio_) + 64;
+    int maxResampled = static_cast<int>(maxBlockSize * resampleRatio_) + 64;
+    maxResampled = std::max(maxResampled, 4096);
     resampledInput_.resize(maxResampled);
     resampledOutput_.resize(maxResampled);
 
@@ -105,7 +105,7 @@ void DeFeedbackProProcessor::updateParametersForBlock()
     }
 }
 
-void DeFeedbackProProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlock*/)
+void DeFeedbackProProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     hostSampleRate_ = sampleRate;
     needsResampling_ = (std::abs(sampleRate - kInternalSampleRate) > 1.0);
@@ -117,7 +117,7 @@ void DeFeedbackProProcessor::prepareToPlay(double sampleRate, int /*samplesPerBl
         for (auto& r : resamplers_) { r.input.reset(); r.output.reset(); }
     }
 
-    initModules(getFFTSizeFromParam());
+    initModules(getFFTSizeFromParam(), samplesPerBlock);
     startTimer(50);
 }
 

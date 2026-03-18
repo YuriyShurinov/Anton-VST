@@ -56,6 +56,14 @@ public:
         writePos_.store(0, std::memory_order_relaxed);
     }
 
+    void resize(size_t newCapacity)
+    {
+        capacity_ = newCapacity;
+        buffer_.resize(newCapacity);
+        readPos_.store(0, std::memory_order_relaxed);
+        writePos_.store(0, std::memory_order_relaxed);
+    }
+
 private:
     size_t capacity_;
     std::vector<T> buffer_;

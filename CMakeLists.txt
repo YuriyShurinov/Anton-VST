@@ -82,6 +82,7 @@ target_compile_definitions(DeFeedbackPro PUBLIC
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
+target_compile_definitions(DeFeedbackPro PRIVATE _USE_MATH_DEFINES)
 
 # Copy models to build output
 file(GLOB MODEL_FILES "${CMAKE_SOURCE_DIR}/models/*.onnx")
@@ -117,7 +118,6 @@ if(BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)
 
     add_executable(DeFeedbackProTests
-        tests/TestMain.cpp
         tests/RingBufferTest.cpp
         tests/SpectralEngineTest.cpp
         tests/FeedbackDetectorTest.cpp
@@ -141,5 +141,6 @@ if(BUILD_TESTS)
     )
     target_compile_definitions(DeFeedbackProTests PRIVATE
         DEFEEDBACK_TEST_MODE=1
+        _USE_MATH_DEFINES
     )
 endif()
