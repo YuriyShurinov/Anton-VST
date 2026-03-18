@@ -8,7 +8,7 @@ TEST_CASE("SpectralSubtractor: clean signal produces mask near 1.0", "[subtracto
     sub.setDenoiseAmount(0.5f);
     std::vector<float> noiseMag(numBins, 0.01f);
     std::vector<float> mask(numBins);
-    for (int i = 0; i < 200; ++i)
+    for (int i = 0; i < 1300; ++i)
         sub.process(noiseMag.data(), mask.data());
     std::vector<float> signalMag(numBins, 1.0f);
     sub.process(signalMag.data(), mask.data());
@@ -23,7 +23,9 @@ TEST_CASE("SpectralSubtractor: noise-level signal produces mask near 0", "[subtr
     sub.setDenoiseAmount(1.0f);
     std::vector<float> noiseMag(numBins, 0.5f);
     std::vector<float> mask(numBins);
-    for (int i = 0; i < 200; ++i)
+    // Martin's minimum statistics needs ceil(1.5s / hopDuration) frames
+    // hopDuration = 64/48000 ≈ 1.33ms, so ~1125 frames minimum
+    for (int i = 0; i < 1300; ++i)
         sub.process(noiseMag.data(), mask.data());
     sub.process(noiseMag.data(), mask.data());
     for (int i = 0; i < numBins; ++i)
@@ -37,7 +39,7 @@ TEST_CASE("SpectralSubtractor: denoise amount 0 with loud signal", "[subtractor]
     sub.setDenoiseAmount(0.0f);
     std::vector<float> mag(numBins, 0.5f);
     std::vector<float> mask(numBins);
-    for (int i = 0; i < 200; ++i)
+    for (int i = 0; i < 1300; ++i)
         sub.process(mag.data(), mask.data());
     std::vector<float> signalMag(numBins, 2.0f);
     sub.process(signalMag.data(), mask.data());

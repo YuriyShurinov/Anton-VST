@@ -36,6 +36,17 @@ void SpectralEngine::computeWindow()
 {
     for (int i = 0; i < fftSize_; ++i)
         window_[i] = 0.5f * (1.0f - std::cos(2.0f * M_PI * i / fftSize_));
+
+    // Compute COLA normalization: sum of w[n-mR]^2 across overlapping frames
+    // For Hann window with 75% overlap (hop=N/4), this is 1.5
+    colaNorm_ = 0.0f;
+    int numOverlaps = fftSize_ / hopSize_;
+    for (int m = 0; m < numOverlaps; ++m)
+    {
+        int sampleIdx = m * hopSize_;
+        if (sampleIdx < fftSize_)
+            colaNorm_ += window_[sampleIdx] * window_[sampleIdx];
+    }
 }
 
 void SpectralEngine::forwardFFT(const float* windowed)
@@ -106,7 +117,7 @@ void SpectralEngine::processBlock(const float* inputSamples, float* outputSample
             for (int i = 0; i < fftSize_; ++i)
             {
                 int idx = (outputReadPos_ + i) % (int)outputRing_.size();
-                outputRing_[idx] += ifftOut_[i] * window_[i];
+                outputRing_[idx] += ifftOut_[i] * window_[i] / colaNorm_;
             }
         }
 

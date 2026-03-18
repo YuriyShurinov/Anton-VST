@@ -32,6 +32,7 @@ private:
     int hopSize_;
     int numBins_;
     float sampleRate_;
+    float colaNorm_ = 1.0f; // COLA normalization for Hann^2 overlap-add
 
     PFFFT_Setup* pffftSetup_ = nullptr;
     float* pffftWork_ = nullptr;
