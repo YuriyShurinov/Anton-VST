@@ -14,6 +14,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Select Xcode
+        run: |
+          # Use Xcode 15.x for JUCE 7 compatibility (16.x may cause issues)
+          XCODE_PATH=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE_PATH" ]; then
+            XCODE_PATH=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          fi
+          echo "Using: $XCODE_PATH"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          xcodebuild -version
+
       - name: Install ONNX Runtime
         run: |
           curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-universal2-1.17.1.tgz
@@ -21,17 +32,16 @@ jobs:
 
       - name: Configure CMake
         run: |
-          cmake -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+          cmake -B build -G Xcode \
             -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-osx-universal2-1.17.1 \
             -DBUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release -- -quiet
 
       - name: Run Tests
-        run: ./build/DeFeedbackProTests || true
+        run: |
+          find build -name "DeFeedbackProTests" -type f -perm +111 | head -1 | xargs -I{} {} || true
 
       - name: Create .pkg Installer
         run: |
