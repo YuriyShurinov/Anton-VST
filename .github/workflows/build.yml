@@ -42,7 +42,26 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-osx-arm64-1.17.1 \
             -DBUILD_TESTS=ON \
-            --log-level=VERBOSE
+            2>&1 | tee cmake_configure_output.log
+        continue-on-error: true
+
+      - name: Upload CMake Log (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-configure-log
+          path: cmake_configure_output.log
+          if-no-files-found: warn
+
+      - name: Check CMake succeeded
+        run: |
+          if [ ! -f build/CMakeCache.txt ]; then
+            echo "CMake configuration FAILED. See cmake-configure-log artifact for details."
+            echo "=== Last 100 lines of cmake output ==="
+            tail -100 cmake_configure_output.log 2>/dev/null || true
+            exit 1
+          fi
+          echo "CMake configuration succeeded!"
 
       - name: Build
         run: cmake --build build --config Release --parallel
