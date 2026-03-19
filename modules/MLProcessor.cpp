@@ -180,7 +180,7 @@ void MLProcessor::runInference(const float* magnitude, int numBins)
     for (int i = 0; i < kNSNet2Bins; ++i)
     {
         float power = mag161[i] * mag161[i];
-        nsnet2Input_[i] = std::log(std::max(power, 1e-12f));
+        nsnet2Input_[i] = std::log10(std::max(power, 1e-12f));
     }
 
 #ifndef DEFEEDBACK_TEST_MODE

@@ -33,10 +33,10 @@ public:
     // Change FFT size (reloads model)
     void setFFTSize(int fftSize);
 
-    // NSNet2 constants
-    static constexpr int kNSNet2Bins = 161;        // 320/2 + 1
-    static constexpr int kNSNet2FFTSize = 320;
-    static constexpr float kNSNet2SampleRate = 16000.0f;
+    // NSNet2 48kHz model constants
+    static constexpr int kNSNet2Bins = 513;        // 1024/2 + 1 (48kHz variant)
+    static constexpr int kNSNet2FFTSize = 1024;
+    static constexpr float kNSNet2SampleRate = 48000.0f;
 
 private:
     void inferenceThreadFunc();
