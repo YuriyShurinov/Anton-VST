@@ -118,14 +118,17 @@ if(APPLE)
     endforeach()
 
     # Embed libonnxruntime.dylib into the bundle Frameworks directory
+    # Note: $<TARGET_BUNDLE_DIR> doesn't work with Unix Makefiles generator,
+    # so we derive the bundle path from $<TARGET_FILE_DIR> (which points to
+    # .vst3/Contents/MacOS/) by going up two levels to the .vst3 bundle root.
     if(ONNXRUNTIME_LIB)
         get_filename_component(ORT_LIB_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
         add_custom_command(TARGET DeFeedbackPro POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E make_directory
-                "$<TARGET_BUNDLE_DIR:DeFeedbackPro>/Contents/Frameworks"
+                "$<TARGET_FILE_DIR:DeFeedbackPro>/../Frameworks"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${ORT_LIB_DIR}/libonnxruntime.dylib"
-                "$<TARGET_BUNDLE_DIR:DeFeedbackPro>/Contents/Frameworks/"
+                "$<TARGET_FILE_DIR:DeFeedbackPro>/../Frameworks/"
             COMMAND install_name_tool -change
                 "@rpath/libonnxruntime.dylib"
                 "@loader_path/../Frameworks/libonnxruntime.dylib"
@@ -136,7 +139,7 @@ if(APPLE)
 
     add_custom_command(TARGET DeFeedbackPro POST_BUILD
         COMMAND codesign --force --sign "-" --deep
-            "$<TARGET_BUNDLE_DIR:DeFeedbackPro>"
+            "$<TARGET_FILE_DIR:DeFeedbackPro>/../.."
         COMMENT "Ad-hoc codesigning plugin bundle"
     )
 endif()
