@@ -117,31 +117,32 @@ if(APPLE)
             MACOSX_PACKAGE_LOCATION "Resources/models")
     endforeach()
 
-    # Embed libonnxruntime.dylib into the bundle Frameworks directory
-    # Note: $<TARGET_BUNDLE_DIR> doesn't work with Unix Makefiles generator,
-    # so we derive the bundle path from $<TARGET_FILE_DIR> (which points to
-    # .vst3/Contents/MacOS/) by going up two levels to the .vst3 bundle root.
-    if(ONNXRUNTIME_LIB)
-        get_filename_component(ORT_LIB_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
-        add_custom_command(TARGET DeFeedbackPro POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                "$<TARGET_FILE_DIR:DeFeedbackPro>/../Frameworks"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${ORT_LIB_DIR}/libonnxruntime.dylib"
-                "$<TARGET_FILE_DIR:DeFeedbackPro>/../Frameworks/"
-            COMMAND install_name_tool -change
-                "@rpath/libonnxruntime.dylib"
-                "@loader_path/../Frameworks/libonnxruntime.dylib"
-                "$<TARGET_FILE:DeFeedbackPro>"
-            COMMENT "Embedding ONNX Runtime into plugin bundle"
-        )
-    endif()
-
-    add_custom_command(TARGET DeFeedbackPro POST_BUILD
-        COMMAND codesign --force --sign "-" --deep
-            "$<TARGET_FILE_DIR:DeFeedbackPro>/../.."
-        COMMENT "Ad-hoc codesigning plugin bundle"
-    )
+    # Embed libonnxruntime.dylib into each plugin bundle's Frameworks directory.
+    # JUCE creates separate targets: DeFeedbackPro_VST3, DeFeedbackPro_AU.
+    # $<TARGET_FILE_DIR:target> points to .vst3/Contents/MacOS/ for the binary.
+    foreach(FORMAT VST3 AU)
+        set(_PLUGIN_TARGET "DeFeedbackPro_${FORMAT}")
+        if(TARGET ${_PLUGIN_TARGET} AND ONNXRUNTIME_LIB)
+            get_filename_component(ORT_LIB_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
+            add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ORT_LIB_DIR}/libonnxruntime.dylib"
+                    "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/"
+                COMMAND install_name_tool -change
+                    "@rpath/libonnxruntime.dylib"
+                    "@loader_path/../Frameworks/libonnxruntime.dylib"
+                    "$<TARGET_FILE:${_PLUGIN_TARGET}>"
+                COMMENT "Embedding ONNX Runtime into ${FORMAT} bundle"
+            )
+            add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
+                COMMAND codesign --force --sign "-" --deep
+                    "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../.."
+                COMMENT "Ad-hoc codesigning ${FORMAT} bundle"
+            )
+        endif()
+    endforeach()
 endif()
 
 # Tests (optional, via Catch2)
