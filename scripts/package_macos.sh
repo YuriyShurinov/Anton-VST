@@ -16,7 +16,12 @@ if [[ "$BUILD_DIR" != /* ]]; then
     BUILD_DIR="$PROJECT_DIR/$BUILD_DIR"
 fi
 
-ARTEFACTS_DIR="$BUILD_DIR/DeFeedbackPro_artefacts/Release"
+# Support both single-config (Makefiles) and multi-config (Xcode) generators
+if [[ -d "$BUILD_DIR/DeFeedbackPro_artefacts/Release" ]]; then
+    ARTEFACTS_DIR="$BUILD_DIR/DeFeedbackPro_artefacts/Release"
+else
+    ARTEFACTS_DIR="$BUILD_DIR/DeFeedbackPro_artefacts"
+fi
 VST3_BUNDLE="$ARTEFACTS_DIR/VST3/DeFeedback Pro.vst3"
 AU_BUNDLE="$ARTEFACTS_DIR/AU/DeFeedback Pro.component"
 MODEL_FILE="$BUILD_DIR/models/nsnet2.onnx"

@@ -7,38 +7,45 @@ on:
 
 jobs:
   # ============================================================
-  # macOS Build (Universal Binary: Intel + Apple Silicon)
+  # macOS Build (Apple Silicon arm64)
   # ============================================================
   build-macos:
     runs-on: macos-14  # Apple Silicon runner
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode
+      - name: Setup Environment
         run: |
-          # Use Xcode 15.x for JUCE 7 compatibility (16.x may cause issues)
-          XCODE_PATH=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE_PATH" ]; then
-            XCODE_PATH=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          fi
-          echo "Using: $XCODE_PATH"
-          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          echo "=== System Info ==="
+          uname -a
+          sw_vers
+          echo "=== Xcode versions available ==="
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          echo "=== Default Xcode ==="
+          xcode-select -p
           xcodebuild -version
+          echo "=== CMake version ==="
+          cmake --version
 
       - name: Install ONNX Runtime
         run: |
-          curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-universal2-1.17.1.tgz
-          tar xzf onnxruntime-osx-universal2-1.17.1.tgz
+          curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-arm64-1.17.1.tgz
+          tar xzf onnxruntime-osx-arm64-1.17.1.tgz
+          echo "=== ONNX Runtime contents ==="
+          ls -la onnxruntime-osx-arm64-1.17.1/lib/
+          ls -la onnxruntime-osx-arm64-1.17.1/include/
 
       - name: Configure CMake
         run: |
-          cmake -B build -G Xcode \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-osx-universal2-1.17.1 \
-            -DBUILD_TESTS=ON
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-osx-arm64-1.17.1 \
+            -DBUILD_TESTS=ON \
+            --log-level=VERBOSE
 
       - name: Build
-        run: cmake --build build --config Release -- -quiet
+        run: cmake --build build --config Release --parallel
 
       - name: Run Tests
         run: |
@@ -60,14 +67,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DeFeedback-Pro-macOS-VST3
-          path: build/DeFeedbackPro_artefacts/Release/VST3/
+          path: |
+            build/DeFeedbackPro_artefacts/Release/VST3/
+            build/DeFeedbackPro_artefacts/VST3/
           if-no-files-found: warn
 
       - name: Upload AU (standalone)
         uses: actions/upload-artifact@v4
         with:
           name: DeFeedback-Pro-macOS-AU
-          path: build/DeFeedbackPro_artefacts/Release/AU/
+          path: |
+            build/DeFeedbackPro_artefacts/Release/AU/
+            build/DeFeedbackPro_artefacts/AU/
           if-no-files-found: warn
 
   # ============================================================
