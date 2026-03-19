@@ -1,2 +1,13 @@
 build/
 .superpowers/
+onnxruntime-win-x64-*/
+onnxruntime-osx-*/
+onnxruntime.zip
+*.obj
+*.exe
+*.pdb
+*.ilk
+__pycache__/
+*.pyc
+build_debug.bat
+tests/DebugRoundtrip.cpp

@@ -25,7 +25,8 @@ target_include_directories(pffft PUBLIC third_party/pffft)
 if(MSVC)
     target_compile_options(pffft PRIVATE /arch:SSE2)
 elseif(APPLE)
-    target_compile_definitions(pffft PRIVATE $<$<STREQUAL:${CMAKE_OSX_ARCHITECTURES},arm64>:PFFFT_ENABLE_NEON>)
+    # For universal binary: PFFFT auto-detects NEON via __aarch64__ at compile time
+    # No special flags needed — compiler handles per-arch intrinsics
 else()
     target_compile_options(pffft PRIVATE -msse2)
 endif()
@@ -84,14 +85,30 @@ target_compile_definitions(DeFeedbackPro PUBLIC
 )
 target_compile_definitions(DeFeedbackPro PRIVATE _USE_MATH_DEFINES)
 
-# Copy models to build output
-file(GLOB MODEL_FILES "${CMAKE_SOURCE_DIR}/models/*.onnx")
+# Copy models to build output (include .onnx and .onnx.data files)
+file(GLOB MODEL_FILES "${CMAKE_SOURCE_DIR}/models/*.onnx" "${CMAKE_SOURCE_DIR}/models/*.onnx.data")
 foreach(MODEL ${MODEL_FILES})
     get_filename_component(MODEL_NAME ${MODEL} NAME)
     configure_file(${MODEL} ${CMAKE_BINARY_DIR}/models/${MODEL_NAME} COPYONLY)
 endforeach()
 
-# macOS: embed models into plugin bundle Resources
+# Windows: copy models next to VST3
+if(WIN32)
+    add_custom_command(TARGET DeFeedbackPro POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:DeFeedbackPro>/../../models"
+        COMMENT "Creating models directory"
+    )
+    foreach(MODEL ${MODEL_FILES})
+        get_filename_component(MODEL_NAME ${MODEL} NAME)
+        add_custom_command(TARGET DeFeedbackPro POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MODEL}" "$<TARGET_FILE_DIR:DeFeedbackPro>/../../models/${MODEL_NAME}"
+        )
+    endforeach()
+endif()
+
+# macOS: embed models and ONNX Runtime into plugin bundle
 if(APPLE)
     foreach(MODEL ${MODEL_FILES})
         get_filename_component(MODEL_NAME ${MODEL} NAME)
@@ -99,6 +116,23 @@ if(APPLE)
         set_source_files_properties(${MODEL} PROPERTIES
             MACOSX_PACKAGE_LOCATION "Resources/models")
     endforeach()
+
+    # Embed libonnxruntime.dylib into the bundle Frameworks directory
+    if(ONNXRUNTIME_LIB)
+        get_filename_component(ORT_LIB_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
+        add_custom_command(TARGET DeFeedbackPro POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_DIR:DeFeedbackPro>/Contents/Frameworks"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ORT_LIB_DIR}/libonnxruntime.dylib"
+                "$<TARGET_BUNDLE_DIR:DeFeedbackPro>/Contents/Frameworks/"
+            COMMAND install_name_tool -change
+                "@rpath/libonnxruntime.dylib"
+                "@loader_path/../Frameworks/libonnxruntime.dylib"
+                "$<TARGET_FILE:DeFeedbackPro>"
+            COMMENT "Embedding ONNX Runtime into plugin bundle"
+        )
+    endif()
 
     add_custom_command(TARGET DeFeedbackPro POST_BUILD
         COMMAND codesign --force --sign "-" --deep

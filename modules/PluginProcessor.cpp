@@ -59,7 +59,7 @@ void DeFeedbackProProcessor::initModules(int fftSize, int maxBlockSize)
     juce::File modelDir = juce::File::getSpecialLocation(
         juce::File::currentExecutableFile).getParentDirectory().getChildFile("models");
     #endif
-    mlProcessor_ = std::make_unique<MLProcessor>(numBins, modelDir.getFullPathName().toStdString(), fftSize);
+    mlProcessor_ = std::make_unique<MLProcessor>(numBins, modelDir.getFullPathName().toStdString(), fftSize, kInternalSampleRate);
 
     mask1_.resize(numBins);
     mask2_.resize(numBins);

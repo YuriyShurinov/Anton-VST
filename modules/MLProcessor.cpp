@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include "MLProcessor.h"
 #include <cmath>
 #include <cstring>
@@ -13,7 +14,6 @@
 
 #ifdef DEFEEDBACK_TEST_MODE
 // Minimal stubs for testing without ONNX Runtime headers in test build
-// The real implementation uses onnxruntime_cxx_api.h
 namespace Ort {
     class Env { public: Env(int, const char*) {} };
     class SessionOptions { public: void SetIntraOpNumThreads(int) {} };
@@ -26,13 +26,13 @@ namespace Ort {
 }
 #endif
 
-MLProcessor::MLProcessor(int numBins, const std::string& modelDir, int fftSize)
+MLProcessor::MLProcessor(int numBins, const std::string& modelDir, int fftSize, float sampleRate)
     : numBins_(numBins),
       modelDir_(modelDir),
       fftSize_(fftSize),
-      inputQueue_(4 * numBins * 8) // buffer up to 8 full history submissions
+      sampleRate_(sampleRate),
+      inputQueue_(numBins * 16) // buffer up to 16 frame submissions
 {
-    frameHistory_.resize(numFrames_ * numBins_, 0.0f);
     for (int i = 0; i < 3; ++i) {
         noiseMasks_[i].resize(numBins_, 1.0f);
         reverbMasks_[i].resize(numBins_, 1.0f);
@@ -40,13 +40,19 @@ MLProcessor::MLProcessor(int numBins, const std::string& modelDir, int fftSize)
     tempNoiseMask_.resize(numBins_, 1.0f);
     tempReverbMask_.resize(numBins_, 1.0f);
 
+    // NSNet2 buffers
+    nsnet2Input_.resize(kNSNet2Bins, 0.0f);
+    nsnet2Output_.resize(kNSNet2Bins, 1.0f);
+    resampledMask_.resize(numBins_, 1.0f);
+
 #ifndef DEFEEDBACK_TEST_MODE
     env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "DeFeedbackPro");
 #else
     env_ = std::make_unique<Ort::Env>(2, "DeFeedbackPro");
 #endif
 
-    std::string modelPath = modelDir + "/denoiser_" + std::to_string(fftSize) + ".onnx";
+    // Load single NSNet2 model (architecture-independent of plugin FFT size)
+    std::string modelPath = modelDir + "/nsnet2.onnx";
     if (loadModel(modelPath))
     {
         running_ = true;
@@ -90,17 +96,28 @@ bool MLProcessor::loadModel(const std::string& path)
     }
 }
 
+void MLProcessor::resampleSpectrum(const float* src, int srcBins, float* dst, int dstBins)
+{
+    // Linear interpolation to resample spectral bins
+    // Maps frequency bin indices proportionally
+    if (srcBins == dstBins) {
+        std::memcpy(dst, src, dstBins * sizeof(float));
+        return;
+    }
+    for (int i = 0; i < dstBins; ++i)
+    {
+        float srcPos = static_cast<float>(i) * (srcBins - 1) / (dstBins - 1);
+        int lo = static_cast<int>(srcPos);
+        int hi = std::min(lo + 1, srcBins - 1);
+        float frac = srcPos - lo;
+        dst[i] = src[lo] * (1.0f - frac) + src[hi] * frac;
+    }
+}
+
 void MLProcessor::submitFrame(const float* magnitude)
 {
-    // Shift history left and append new frame
-    std::memmove(frameHistory_.data(),
-                 frameHistory_.data() + numBins_,
-                 (numFrames_ - 1) * numBins_ * sizeof(float));
-    std::memcpy(frameHistory_.data() + (numFrames_ - 1) * numBins_,
-                magnitude, numBins_ * sizeof(float));
-
-    // Push full history to inference queue
-    inputQueue_.push(frameHistory_.data(), numFrames_ * numBins_);
+    // Push raw magnitude frame to inference queue
+    inputQueue_.push(magnitude, numBins_);
 }
 
 bool MLProcessor::getLatestMasks(float* noiseMask, float* reverbMask)
@@ -133,18 +150,18 @@ void MLProcessor::computeMask2(float* mask2)
 
 void MLProcessor::inferenceThreadFunc()
 {
-    std::vector<float> inputData(numFrames_ * numBins_);
+    std::vector<float> inputFrame(numBins_);
 
     while (running_)
     {
-        if (inputQueue_.availableToRead() >= static_cast<size_t>(numFrames_ * numBins_))
+        if (inputQueue_.availableToRead() >= static_cast<size_t>(numBins_))
         {
             // Drain to latest frame (skip old ones)
-            while (inputQueue_.availableToRead() >= static_cast<size_t>(numFrames_ * numBins_ * 2))
-                inputQueue_.pop(inputData.data(), numFrames_ * numBins_);
+            while (inputQueue_.availableToRead() >= static_cast<size_t>(numBins_ * 2))
+                inputQueue_.pop(inputFrame.data(), numBins_);
 
-            inputQueue_.pop(inputData.data(), numFrames_ * numBins_);
-            runInference(inputData.data(), numFrames_);
+            inputQueue_.pop(inputFrame.data(), numBins_);
+            runInference(inputFrame.data(), numBins_);
         }
         else
         {
@@ -153,30 +170,45 @@ void MLProcessor::inferenceThreadFunc()
     }
 }
 
-void MLProcessor::runInference(const float* input, int numFrames)
+void MLProcessor::runInference(const float* magnitude, int numBins)
 {
+    // Step 1: Resample magnitude from plugin bins to NSNet2 bins (161)
+    std::vector<float> mag161(kNSNet2Bins);
+    resampleSpectrum(magnitude, numBins, mag161.data(), kNSNet2Bins);
+
+    // Step 2: Convert to log-power spectrum (NSNet2 input format)
+    for (int i = 0; i < kNSNet2Bins; ++i)
+    {
+        float power = mag161[i] * mag161[i];
+        nsnet2Input_[i] = std::log(std::max(power, 1e-12f));
+    }
+
 #ifndef DEFEEDBACK_TEST_MODE
     if (!session_) return;
 
     try
     {
         auto memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        std::array<int64_t, 3> inputShape = {1, numFrames, numBins_};
+
+        // NSNet2 input: [batch=1, frames=1, 161]
+        std::array<int64_t, 3> inputShape = {1, 1, kNSNet2Bins};
         auto inputTensor = Ort::Value::CreateTensor<float>(
-            memInfo, const_cast<float*>(input),
-            numFrames * numBins_, inputShape.data(), 3);
+            memInfo, nsnet2Input_.data(),
+            kNSNet2Bins, inputShape.data(), 3);
 
         const char* inputNames[] = {"input"};
-        const char* outputNames[] = {"noise_mask", "reverb_mask"};
+        const char* outputNames[] = {"output"};
 
         auto outputs = session_->Run(Ort::RunOptions{nullptr},
                                       inputNames, &inputTensor, 1,
-                                      outputNames, 2);
+                                      outputNames, 1);
 
-        const float* noiseData = outputs[0].GetTensorData<float>();
-        const float* reverbData = outputs[1].GetTensorData<float>();
+        const float* maskData = outputs[0].GetTensorData<float>();
 
-        // Pick a buffer that isn't the current latest (being read) or the last written
+        // Step 3: Resample mask from 161 bins back to plugin's numBins_
+        resampleSpectrum(maskData, kNSNet2Bins, resampledMask_.data(), numBins_);
+
+        // Step 4: Write to triple buffer
         int latest = latestMaskBuffer_.load(std::memory_order_acquire);
         int writeSlot = 0;
         for (int i = 0; i < 3; ++i) {
@@ -186,16 +218,16 @@ void MLProcessor::runInference(const float* input, int numFrames)
         auto& nDst = noiseMasks_[writeSlot];
         auto& rDst = reverbMasks_[writeSlot];
 
-        std::memcpy(nDst.data(), noiseData, numBins_ * sizeof(float));
-        std::memcpy(rDst.data(), reverbData, numBins_ * sizeof(float));
+        // NSNet2 outputs single suppression mask — use for both noise and reverb
+        std::memcpy(nDst.data(), resampledMask_.data(), numBins_ * sizeof(float));
+        std::memcpy(rDst.data(), resampledMask_.data(), numBins_ * sizeof(float));
 
         latestMaskBuffer_.store(writeSlot, std::memory_order_release);
         writingBuffer_ = writeSlot;
     }
-    catch (...) { /* reuse last mask */ }
+    catch (...) { /* reuse last mask on error */ }
 #else
-    // Test mode: generate sigmoid-like dummy masks
-    // Pick a buffer that isn't the current latest (being read) or the last written
+    // Test mode: generate sigmoid-like dummy masks from input
     int latest = latestMaskBuffer_.load(std::memory_order_acquire);
     int writeSlot = 0;
     for (int i = 0; i < 3; ++i) {
@@ -207,11 +239,7 @@ void MLProcessor::runInference(const float* input, int numFrames)
 
     for (int i = 0; i < numBins_; ++i)
     {
-        float avg = 0.0f;
-        for (int f = 0; f < numFrames; ++f)
-            avg += input[f * numBins_ + i];
-        avg /= numFrames;
-        float sig = 1.0f / (1.0f + std::exp(-avg));
+        float sig = 1.0f / (1.0f + std::exp(-magnitude[i]));
         nDst[i] = sig;
         rDst[i] = sig;
     }
@@ -229,18 +257,20 @@ void MLProcessor::setFFTSize(int fftSize)
 
     fftSize_ = fftSize;
     numBins_ = fftSize / 2 + 1;
-    frameHistory_.assign(numFrames_ * numBins_, 0.0f);
+
     for (int i = 0; i < 3; ++i) {
         noiseMasks_[i].assign(numBins_, 1.0f);
         reverbMasks_[i].assign(numBins_, 1.0f);
     }
     tempNoiseMask_.assign(numBins_, 1.0f);
     tempReverbMask_.assign(numBins_, 1.0f);
+    resampledMask_.assign(numBins_, 1.0f);
     latestMaskBuffer_ = -1;
     inputQueue_.reset();
-    inputQueue_.resize(4 * numBins_ * 8);
+    inputQueue_.resize(numBins_ * 16);
 
-    std::string modelPath = modelDir_ + "/denoiser_" + std::to_string(fftSize) + ".onnx";
+    // NSNet2 model is FFT-size independent — just reload it
+    std::string modelPath = modelDir_ + "/nsnet2.onnx";
     if (loadModel(modelPath))
     {
         running_ = true;
