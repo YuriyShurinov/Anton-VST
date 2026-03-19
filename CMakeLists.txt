@@ -4,9 +4,9 @@ project(DeFeedbackPro VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# macOS: build universal binary (Intel + Apple Silicon)
+# macOS deployment target (architectures set via cmake -D to avoid
+# breaking JUCE's juceaide host-tool build during FetchContent)
 if(APPLE)
-    set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "Build universal binary")
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
