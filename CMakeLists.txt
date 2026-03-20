@@ -144,6 +144,10 @@ if(APPLE)
                         "@rpath/libonnxruntime.dylib"
                         "@loader_path/../Frameworks/libonnxruntime.dylib"
                         "$<TARGET_FILE:${_PLUGIN_TARGET}>"
+                    COMMAND install_name_tool -change
+                        "@rpath/libonnxruntime.1.17.1.dylib"
+                        "@loader_path/../Frameworks/libonnxruntime.dylib"
+                        "$<TARGET_FILE:${_PLUGIN_TARGET}>"
                     COMMAND install_name_tool -id
                         "@loader_path/../Frameworks/libonnxruntime.dylib"
                         "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/libonnxruntime.dylib"
