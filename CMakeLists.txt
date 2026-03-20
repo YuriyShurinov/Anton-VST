@@ -108,34 +108,48 @@ if(WIN32)
     endforeach()
 endif()
 
-# macOS: embed models and ONNX Runtime into plugin bundle
+# macOS: embed models and ONNX Runtime into plugin bundles via post-build commands.
+# Note: MACOSX_PACKAGE_LOCATION only works with Xcode generator, so we use
+# explicit copy commands that work with any generator (including Unix Makefiles).
 if(APPLE)
-    foreach(MODEL ${MODEL_FILES})
-        get_filename_component(MODEL_NAME ${MODEL} NAME)
-        target_sources(DeFeedbackPro PRIVATE ${MODEL})
-        set_source_files_properties(${MODEL} PROPERTIES
-            MACOSX_PACKAGE_LOCATION "Resources/models")
-    endforeach()
-
-    # Embed libonnxruntime.dylib into each plugin bundle's Frameworks directory.
-    # JUCE creates separate targets: DeFeedbackPro_VST3, DeFeedbackPro_AU.
-    # $<TARGET_FILE_DIR:target> points to .vst3/Contents/MacOS/ for the binary.
     foreach(FORMAT VST3 AU)
         set(_PLUGIN_TARGET "DeFeedbackPro_${FORMAT}")
-        if(TARGET ${_PLUGIN_TARGET} AND ONNXRUNTIME_LIB)
-            get_filename_component(ORT_LIB_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
+        if(TARGET ${_PLUGIN_TARGET})
+            # 1) Copy models into bundle Resources/models/
             add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory
-                    "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${ORT_LIB_DIR}/libonnxruntime.dylib"
-                    "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/"
-                COMMAND install_name_tool -change
-                    "@rpath/libonnxruntime.dylib"
-                    "@loader_path/../Frameworks/libonnxruntime.dylib"
-                    "$<TARGET_FILE:${_PLUGIN_TARGET}>"
-                COMMENT "Embedding ONNX Runtime into ${FORMAT} bundle"
+                    "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Resources/models"
+                COMMENT "Creating Resources/models in ${FORMAT} bundle"
             )
+            foreach(MODEL ${MODEL_FILES})
+                get_filename_component(MODEL_NAME ${MODEL} NAME)
+                add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${MODEL}"
+                        "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Resources/models/${MODEL_NAME}"
+                )
+            endforeach()
+
+            # 2) Embed ONNX Runtime dylib into Frameworks/
+            if(ONNXRUNTIME_LIB)
+                get_filename_component(ORT_LIB_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
+                add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E make_directory
+                        "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks"
+                    # Copy the actual dylib (resolve symlinks)
+                    COMMAND bash -c "cp -L '${ORT_LIB_DIR}/libonnxruntime.dylib' '$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/libonnxruntime.dylib'"
+                    # Also copy versioned dylib if present
+                    COMMAND bash -c "cp -L '${ORT_LIB_DIR}'/libonnxruntime.*.dylib '$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/' 2>/dev/null || true"
+                    # Fix the library reference: try both @rpath patterns
+                    COMMAND bash -c "install_name_tool -change '@rpath/libonnxruntime.dylib' '@loader_path/../Frameworks/libonnxruntime.dylib' '$<TARGET_FILE:${_PLUGIN_TARGET}>' 2>/dev/null || true"
+                    COMMAND bash -c "install_name_tool -change '@rpath/libonnxruntime.1.17.1.dylib' '@loader_path/../Frameworks/libonnxruntime.1.17.1.dylib' '$<TARGET_FILE:${_PLUGIN_TARGET}>' 2>/dev/null || true"
+                    # Fix the dylib's own install name
+                    COMMAND bash -c "install_name_tool -id '@loader_path/../Frameworks/libonnxruntime.dylib' '$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/libonnxruntime.dylib' 2>/dev/null || true"
+                    COMMENT "Embedding ONNX Runtime into ${FORMAT} bundle"
+                )
+            endif()
+
+            # 3) Ad-hoc codesign the entire bundle
             add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
                 COMMAND codesign --force --sign "-" --deep
                     "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../.."

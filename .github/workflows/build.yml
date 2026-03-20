@@ -66,6 +66,23 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: Verify VST3 Bundle
+        run: |
+          echo "=== VST3 Bundle Contents ==="
+          VST3_BUNDLE=$(find build -name "*.vst3" -type d | head -1)
+          echo "Bundle: $VST3_BUNDLE"
+          find "$VST3_BUNDLE" -type f | sort
+          echo ""
+          echo "=== Binary Dependencies (otool -L) ==="
+          BINARY=$(find "$VST3_BUNDLE" -name "DeFeedback Pro" -type f | head -1)
+          otool -L "$BINARY" || true
+          echo ""
+          echo "=== Frameworks contents ==="
+          ls -la "$VST3_BUNDLE/Contents/Frameworks/" 2>/dev/null || echo "No Frameworks dir!"
+          echo ""
+          echo "=== Models ==="
+          ls -la "$VST3_BUNDLE/Contents/Resources/models/" 2>/dev/null || echo "No models dir!"
+
       - name: Run Tests
         run: |
           find build -name "DeFeedbackProTests" -type f -perm +111 | head -1 | xargs -I{} {} || true
