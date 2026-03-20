@@ -133,18 +133,20 @@ if(APPLE)
             # 2) Embed ONNX Runtime dylib into Frameworks/
             if(ONNXRUNTIME_LIB)
                 get_filename_component(ORT_LIB_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
+                # Use a helper script to handle symlink resolution and install_name fixups
                 add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
                     COMMAND ${CMAKE_COMMAND} -E make_directory
                         "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks"
-                    # Copy the actual dylib (resolve symlinks)
-                    COMMAND bash -c "cp -L '${ORT_LIB_DIR}/libonnxruntime.dylib' '$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/libonnxruntime.dylib'"
-                    # Also copy versioned dylib if present
-                    COMMAND bash -c "cp -L '${ORT_LIB_DIR}'/libonnxruntime.*.dylib '$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/' 2>/dev/null || true"
-                    # Fix the library reference: try both @rpath patterns
-                    COMMAND bash -c "install_name_tool -change '@rpath/libonnxruntime.dylib' '@loader_path/../Frameworks/libonnxruntime.dylib' '$<TARGET_FILE:${_PLUGIN_TARGET}>' 2>/dev/null || true"
-                    COMMAND bash -c "install_name_tool -change '@rpath/libonnxruntime.1.17.1.dylib' '@loader_path/../Frameworks/libonnxruntime.1.17.1.dylib' '$<TARGET_FILE:${_PLUGIN_TARGET}>' 2>/dev/null || true"
-                    # Fix the dylib's own install name
-                    COMMAND bash -c "install_name_tool -id '@loader_path/../Frameworks/libonnxruntime.dylib' '$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/libonnxruntime.dylib' 2>/dev/null || true"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${ORT_LIB_DIR}/libonnxruntime.dylib"
+                        "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/libonnxruntime.dylib"
+                    COMMAND install_name_tool -change
+                        "@rpath/libonnxruntime.dylib"
+                        "@loader_path/../Frameworks/libonnxruntime.dylib"
+                        "$<TARGET_FILE:${_PLUGIN_TARGET}>"
+                    COMMAND install_name_tool -id
+                        "@loader_path/../Frameworks/libonnxruntime.dylib"
+                        "$<TARGET_FILE_DIR:${_PLUGIN_TARGET}>/../Frameworks/libonnxruntime.dylib"
                     COMMENT "Embedding ONNX Runtime into ${FORMAT} bundle"
                 )
             endif()

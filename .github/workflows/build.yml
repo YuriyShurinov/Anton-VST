@@ -34,6 +34,21 @@ jobs:
           echo "=== ONNX Runtime contents ==="
           ls -la onnxruntime-osx-arm64-1.17.1/lib/
           ls -la onnxruntime-osx-arm64-1.17.1/include/
+          echo "=== ONNX Runtime dylib install name ==="
+          otool -D onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
+          echo "=== File type ==="
+          file onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
+          # Ensure libonnxruntime.dylib is a real file (not just symlink)
+          # If it's a symlink, resolve it
+          if [ -L onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib ]; then
+            echo "libonnxruntime.dylib is a symlink, resolving..."
+            REAL=$(readlink -f onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib)
+            cp "$REAL" onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib.real
+            rm onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
+            mv onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib.real onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
+            echo "Resolved. New install name:"
+            otool -D onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
+          fi
 
       - name: Configure CMake
         run: |
@@ -66,22 +81,50 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: Verify VST3 Bundle
+      - name: Fix and Verify Bundles
         run: |
-          echo "=== VST3 Bundle Contents ==="
-          VST3_BUNDLE=$(find build -name "*.vst3" -type d | head -1)
-          echo "Bundle: $VST3_BUNDLE"
-          find "$VST3_BUNDLE" -type f | sort
-          echo ""
-          echo "=== Binary Dependencies (otool -L) ==="
-          BINARY=$(find "$VST3_BUNDLE" -name "DeFeedback Pro" -type f | head -1)
-          otool -L "$BINARY" || true
-          echo ""
-          echo "=== Frameworks contents ==="
-          ls -la "$VST3_BUNDLE/Contents/Frameworks/" 2>/dev/null || echo "No Frameworks dir!"
-          echo ""
-          echo "=== Models ==="
-          ls -la "$VST3_BUNDLE/Contents/Resources/models/" 2>/dev/null || echo "No models dir!"
+          # Fix install names for all plugin bundles
+          for BUNDLE in $(find build -name "*.vst3" -o -name "*.component" | head -5); do
+            echo "=== Processing: $BUNDLE ==="
+            BINARY=$(find "$BUNDLE" -name "DeFeedback Pro" -type f 2>/dev/null | head -1)
+            if [ -z "$BINARY" ]; then
+              echo "  No binary found, skipping"
+              continue
+            fi
+
+            echo "  Binary: $BINARY"
+            echo "  Dependencies:"
+            otool -L "$BINARY"
+
+            # Find any @rpath/libonnxruntime reference and fix it
+            ORT_REF=$(otool -L "$BINARY" | grep libonnxruntime | awk '{print $1}')
+            if [ -n "$ORT_REF" ]; then
+              echo "  Current ORT reference: $ORT_REF"
+              FRAMEWORKS_DIR="$BUNDLE/Contents/Frameworks"
+              if [ -d "$FRAMEWORKS_DIR" ]; then
+                echo "  Frameworks dir exists:"
+                ls -la "$FRAMEWORKS_DIR/"
+                # Fix the reference regardless of what the original name is
+                install_name_tool -change "$ORT_REF" \
+                  "@loader_path/../Frameworks/libonnxruntime.dylib" \
+                  "$BINARY" || true
+                # Fix the dylib's own id
+                install_name_tool -id "@loader_path/../Frameworks/libonnxruntime.dylib" \
+                  "$FRAMEWORKS_DIR/libonnxruntime.dylib" || true
+                echo "  After fix:"
+                otool -L "$BINARY" | grep onnxruntime
+              else
+                echo "  WARNING: No Frameworks directory!"
+              fi
+            fi
+
+            echo "  Models:"
+            ls -la "$BUNDLE/Contents/Resources/models/" 2>/dev/null || echo "  WARNING: No models!"
+
+            # Re-codesign after fixes
+            codesign --force --sign "-" --deep "$BUNDLE"
+            echo ""
+          done
 
       - name: Run Tests
         run: |
