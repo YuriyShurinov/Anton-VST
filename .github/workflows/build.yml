@@ -7,10 +7,10 @@ on:
 
 jobs:
   # ============================================================
-  # macOS Build (Apple Silicon arm64)
+  # macOS Build (Universal Binary: arm64 + x86_64)
   # ============================================================
   build-macos:
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-14  # Apple Silicon runner (has Rosetta for x86_64)
     steps:
       - uses: actions/checkout@v4
 
@@ -19,116 +19,128 @@ jobs:
           echo "=== System Info ==="
           uname -a
           sw_vers
-          echo "=== Xcode versions available ==="
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
-          echo "=== Default Xcode ==="
-          xcode-select -p
-          xcodebuild -version
-          echo "=== CMake version ==="
           cmake --version
 
       - name: Install ONNX Runtime
         run: |
+          # Download both arm64 and x86_64 builds
           curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-arm64-1.17.1.tgz
+          curl -LO https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-osx-x86_64-1.17.1.tgz
           tar xzf onnxruntime-osx-arm64-1.17.1.tgz
-          echo "=== ONNX Runtime contents ==="
-          ls -la onnxruntime-osx-arm64-1.17.1/lib/
-          ls -la onnxruntime-osx-arm64-1.17.1/include/
-          echo "=== ONNX Runtime dylib install name ==="
-          otool -D onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
-          echo "=== File type ==="
-          file onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
-          # Ensure libonnxruntime.dylib is a real file (not just symlink)
-          # If it's a symlink, resolve it
-          if [ -L onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib ]; then
-            echo "libonnxruntime.dylib is a symlink, resolving..."
-            REAL=$(readlink -f onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib)
-            cp "$REAL" onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib.real
-            rm onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
-            mv onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib.real onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
-            echo "Resolved. New install name:"
-            otool -D onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib
-          fi
+          tar xzf onnxruntime-osx-x86_64-1.17.1.tgz
 
-      - name: Configure CMake
+          # Create universal ORT dylib via lipo
+          mkdir -p onnxruntime-universal/lib onnxruntime-universal/include
+          cp -R onnxruntime-osx-arm64-1.17.1/include/* onnxruntime-universal/include/
+
+          # Resolve symlinks and create universal dylib
+          ARM_LIB=$(readlink -f onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib || echo onnxruntime-osx-arm64-1.17.1/lib/libonnxruntime.dylib)
+          X86_LIB=$(readlink -f onnxruntime-osx-x86_64-1.17.1/lib/libonnxruntime.dylib || echo onnxruntime-osx-x86_64-1.17.1/lib/libonnxruntime.dylib)
+          lipo -create "$ARM_LIB" "$X86_LIB" -output onnxruntime-universal/lib/libonnxruntime.dylib
+
+          echo "=== Universal dylib ==="
+          file onnxruntime-universal/lib/libonnxruntime.dylib
+          otool -D onnxruntime-universal/lib/libonnxruntime.dylib
+
+      - name: Build arm64
         run: |
-          cmake -B build \
+          cmake -B build-arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-osx-arm64-1.17.1 \
-            -DBUILD_TESTS=ON \
-            2>&1 | tee cmake_configure_output.log
-        continue-on-error: true
+            -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-universal \
+            -DBUILD_TESTS=ON
+          cmake --build build-arm64 --config Release --parallel
 
-      - name: Upload CMake Log (debug)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cmake-configure-log
-          path: cmake_configure_output.log
-          if-no-files-found: warn
-
-      - name: Check CMake succeeded
+      - name: Build x86_64
         run: |
-          if [ ! -f build/CMakeCache.txt ]; then
-            echo "CMake configuration FAILED. See cmake-configure-log artifact for details."
-            echo "=== Last 100 lines of cmake output ==="
-            tail -100 cmake_configure_output.log 2>/dev/null || true
-            exit 1
+          cmake -B build-x86_64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-universal \
+            -DBUILD_TESTS=OFF
+          cmake --build build-x86_64 --config Release --parallel
+
+      - name: Create Universal Bundles
+        run: |
+          # Determine artefacts dirs (single-config vs multi-config)
+          if [ -d build-arm64/DeFeedbackPro_artefacts/Release ]; then
+            ARM_DIR="build-arm64/DeFeedbackPro_artefacts/Release"
+            X86_DIR="build-x86_64/DeFeedbackPro_artefacts/Release"
+          else
+            ARM_DIR="build-arm64/DeFeedbackPro_artefacts"
+            X86_DIR="build-x86_64/DeFeedbackPro_artefacts"
           fi
-          echo "CMake configuration succeeded!"
 
-      - name: Build
-        run: cmake --build build --config Release --parallel
+          # Create output dir with arm64 bundle as base
+          mkdir -p build/DeFeedbackPro_artefacts/Release
+          cp -R "$ARM_DIR/VST3" "build/DeFeedbackPro_artefacts/Release/"
 
-      - name: Fix and Verify Bundles
-        run: |
-          # Fix install names for all plugin bundles
-          for BUNDLE in $(find build -name "*.vst3" -o -name "*.component" | head -5); do
-            echo "=== Processing: $BUNDLE ==="
-            BINARY=$(find "$BUNDLE" -name "DeFeedback Pro" -type f 2>/dev/null | head -1)
-            if [ -z "$BINARY" ]; then
-              echo "  No binary found, skipping"
-              continue
+          if [ -d "$ARM_DIR/AU" ]; then
+            cp -R "$ARM_DIR/AU" "build/DeFeedbackPro_artefacts/Release/"
+          fi
+
+          # Copy models to build/models for packaging script
+          cp -R build-arm64/models build/models
+
+          # Lipo VST3 binary
+          VST3_ARM="$ARM_DIR/VST3/DeFeedback Pro.vst3/Contents/MacOS/DeFeedback Pro"
+          VST3_X86="$X86_DIR/VST3/DeFeedback Pro.vst3/Contents/MacOS/DeFeedback Pro"
+          VST3_OUT="build/DeFeedbackPro_artefacts/Release/VST3/DeFeedback Pro.vst3/Contents/MacOS/DeFeedback Pro"
+
+          echo "=== Creating universal VST3 binary ==="
+          lipo -create "$VST3_ARM" "$VST3_X86" -output "$VST3_OUT"
+          file "$VST3_OUT"
+
+          # Lipo AU binary if present
+          AU_ARM="$ARM_DIR/AU/DeFeedback Pro.component/Contents/MacOS/DeFeedback Pro"
+          AU_X86="$X86_DIR/AU/DeFeedback Pro.component/Contents/MacOS/DeFeedback Pro"
+          if [ -f "$AU_ARM" ] && [ -f "$AU_X86" ]; then
+            AU_OUT="build/DeFeedbackPro_artefacts/Release/AU/DeFeedback Pro.component/Contents/MacOS/DeFeedback Pro"
+            echo "=== Creating universal AU binary ==="
+            lipo -create "$AU_ARM" "$AU_X86" -output "$AU_OUT"
+            file "$AU_OUT"
+          fi
+
+          # Replace ORT dylib with universal version in bundles
+          for BUNDLE in $(find build/DeFeedbackPro_artefacts -name "*.vst3" -o -name "*.component" 2>/dev/null); do
+            FW_DIR="$BUNDLE/Contents/Frameworks"
+            if [ -d "$FW_DIR" ]; then
+              cp onnxruntime-universal/lib/libonnxruntime.dylib "$FW_DIR/libonnxruntime.dylib"
             fi
+          done
 
-            echo "  Binary: $BINARY"
-            echo "  Dependencies:"
-            otool -L "$BINARY"
+      - name: Fix Install Names and Codesign
+        run: |
+          for BUNDLE in $(find build/DeFeedbackPro_artefacts -name "*.vst3" -o -name "*.component" 2>/dev/null); do
+            echo "=== Processing: $BUNDLE ==="
+            BINARY=$(find "$BUNDLE/Contents/MacOS" -name "DeFeedback Pro" -type f 2>/dev/null | head -1)
+            if [ -z "$BINARY" ]; then continue; fi
 
-            # Find any @rpath/libonnxruntime reference and fix it
+            # Fix any ORT reference to @loader_path
             ORT_REF=$(otool -L "$BINARY" | grep libonnxruntime | awk '{print $1}')
             if [ -n "$ORT_REF" ]; then
-              echo "  Current ORT reference: $ORT_REF"
-              FRAMEWORKS_DIR="$BUNDLE/Contents/Frameworks"
-              if [ -d "$FRAMEWORKS_DIR" ]; then
-                echo "  Frameworks dir exists:"
-                ls -la "$FRAMEWORKS_DIR/"
-                # Fix the reference regardless of what the original name is
-                install_name_tool -change "$ORT_REF" \
-                  "@loader_path/../Frameworks/libonnxruntime.dylib" \
-                  "$BINARY" || true
-                # Fix the dylib's own id
-                install_name_tool -id "@loader_path/../Frameworks/libonnxruntime.dylib" \
-                  "$FRAMEWORKS_DIR/libonnxruntime.dylib" || true
-                echo "  After fix:"
-                otool -L "$BINARY" | grep onnxruntime
-              else
-                echo "  WARNING: No Frameworks directory!"
-              fi
+              install_name_tool -change "$ORT_REF" \
+                "@loader_path/../Frameworks/libonnxruntime.dylib" "$BINARY"
             fi
 
-            echo "  Models:"
-            ls -la "$BUNDLE/Contents/Resources/models/" 2>/dev/null || echo "  WARNING: No models!"
+            # Fix dylib id
+            FW="$BUNDLE/Contents/Frameworks/libonnxruntime.dylib"
+            if [ -f "$FW" ]; then
+              install_name_tool -id "@loader_path/../Frameworks/libonnxruntime.dylib" "$FW"
+            fi
 
-            # Re-codesign after fixes
+            # Codesign
             codesign --force --sign "-" --deep "$BUNDLE"
+
+            echo "  Binary arch: $(file "$BINARY" | sed 's/.*: //')"
+            echo "  ORT ref: $(otool -L "$BINARY" | grep onnxruntime | awk '{print $1}')"
+            echo "  ORT arch: $(file "$FW" 2>/dev/null | sed 's/.*: //' || echo 'N/A')"
             echo ""
           done
 
       - name: Run Tests
         run: |
-          find build -name "DeFeedbackProTests" -type f -perm +111 | head -1 | xargs -I{} {} || true
+          find build-arm64 -name "DeFeedbackProTests" -type f -perm +111 | head -1 | xargs -I{} {} || true
 
       - name: Create .pkg Installer
         run: |
@@ -146,18 +158,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: DeFeedback-Pro-macOS-VST3
-          path: |
-            build/DeFeedbackPro_artefacts/Release/VST3/
-            build/DeFeedbackPro_artefacts/VST3/
+          path: build/DeFeedbackPro_artefacts/Release/VST3/
           if-no-files-found: warn
 
       - name: Upload AU (standalone)
         uses: actions/upload-artifact@v4
         with:
           name: DeFeedback-Pro-macOS-AU
-          path: |
-            build/DeFeedbackPro_artefacts/Release/AU/
-            build/DeFeedbackPro_artefacts/AU/
+          path: build/DeFeedbackPro_artefacts/Release/AU/
           if-no-files-found: warn
 
   # ============================================================
