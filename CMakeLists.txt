@@ -115,6 +115,14 @@ if(APPLE)
     foreach(FORMAT VST3 AU)
         set(_PLUGIN_TARGET "DeFeedbackPro_${FORMAT}")
         if(TARGET ${_PLUGIN_TARGET})
+            # Set BUILD_RPATH so JUCE's juce_vst3_helper can find libonnxruntime
+            # when it tries to dlopen the plugin during moduleinfo.json generation.
+            if(ONNXRUNTIME_LIB)
+                get_filename_component(_ORT_DIR ${ONNXRUNTIME_LIB} DIRECTORY)
+                set_target_properties(${_PLUGIN_TARGET} PROPERTIES
+                    BUILD_RPATH "${_ORT_DIR}")
+            endif()
+
             # 1) Copy models into bundle Resources/models/
             add_custom_command(TARGET ${_PLUGIN_TARGET} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory
