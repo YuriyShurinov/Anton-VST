@@ -38,6 +38,15 @@ jobs:
           X86_LIB=$(readlink -f onnxruntime-osx-x86_64-1.17.1/lib/libonnxruntime.dylib || echo onnxruntime-osx-x86_64-1.17.1/lib/libonnxruntime.dylib)
           lipo -create "$ARM_LIB" "$X86_LIB" -output onnxruntime-universal/lib/libonnxruntime.dylib
 
+          # Fix the install name to match the filename (removes versioned name)
+          # This ensures the linker records @rpath/libonnxruntime.dylib, not
+          # @rpath/libonnxruntime.1.17.1.dylib, so BUILD_RPATH works correctly
+          # when juce_vst3_helper tries to dlopen the plugin during build.
+          install_name_tool -id "@rpath/libonnxruntime.dylib" onnxruntime-universal/lib/libonnxruntime.dylib
+
+          # Also create versioned symlink as fallback
+          ln -sf libonnxruntime.dylib onnxruntime-universal/lib/libonnxruntime.1.17.1.dylib
+
           echo "=== Universal dylib ==="
           file onnxruntime-universal/lib/libonnxruntime.dylib
           otool -D onnxruntime-universal/lib/libonnxruntime.dylib
