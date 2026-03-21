@@ -42,23 +42,27 @@ jobs:
           file onnxruntime-universal/lib/libonnxruntime.dylib
           otool -D onnxruntime-universal/lib/libonnxruntime.dylib
 
-      - name: Build arm64
+      - name: Configure arm64
         run: |
           cmake -B build-arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-universal \
             -DBUILD_TESTS=ON
-          cmake --build build-arm64 --config Release --parallel
 
-      - name: Build x86_64
+      - name: Build arm64
+        run: cmake --build build-arm64 --config Release --parallel
+
+      - name: Configure x86_64
         run: |
           cmake -B build-x86_64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DONNXRUNTIME_ROOT=${{ github.workspace }}/onnxruntime-universal \
             -DBUILD_TESTS=OFF
-          cmake --build build-x86_64 --config Release --parallel
+
+      - name: Build x86_64
+        run: cmake --build build-x86_64 --config Release --parallel
 
       - name: Create Universal Bundles
         run: |
